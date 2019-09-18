@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* ******************************************************************
  ALTERNATING BIT AND GO-BACK-N NETWORK EMULATOR: VERSION 1.1  J.F.Kurose
@@ -38,40 +39,133 @@ struct pkt {
     };
 
 /********* STUDENTS WRITE THE NEXT SEVEN ROUTINES *********/
+// Adding definitions for states
+#define         A                       0
+#define         B                       1
+#define         NOT_APPLICABLE          -1
+#define         INCREMENT               10       // time for timeout
 
+// Adding global variables to keep state
+int stateA;
+int seqnumA;
+int acknumA;
+struct pkt last_packet_sent;
+int stateB;
 
+// Adding function headers to be able to use them before declaration
+void tolayer3(int AorB, struct pkt packet);
+void tolayer5(int AorB, char * message);
+void starttimer(int AorB, float increment);
+void stoptimer(int AorB);
 
+// Helper methods
+/* evaluates checksum */
+int checksum(int seqnum, int acknum, char * payload){
+    int checksum = seqnum + acknum;
 
+    for(int i = 0 ; i < sizeof(payload) ; i++)
+        checksum += payload[i];
+
+    return checksum;
+}
+
+/* checks if the packet is corrupted by checking its checksum */
+int corrupt(struct pkt packet){
+    int expected_checksum;
+
+    expected_checksum = checksum(packet.seqnum, packet.acknum, packet.payload);
+
+    if(expected_checksum == packet.checksum) return 0;   // not corrupted
+
+    return 1;       // corrupted
+}
+
+/* creates packet using information passed */
+struct pkt make_packet(int seqnum, int acknum, char * payload){
+    struct pkt packet;
+
+    packet.seqnum = seqnum;
+    packet.acknum = acknum;
+    packet.checksum = checksum(seqnum, acknum, payload);
+    for(int i = 0 ; i < sizeof(packet.payload) ; i++)
+        packet.payload[i] = payload[i];
+
+    return packet;
+}
+
+/* checks if packet is an ACK */
+int is_ACK(struct pkt packet){
+    if(!strcmp(packet.payload, "ACK")) return 1;
+
+    return 0;
+}
+
+/* checks if packet is the expected ACK */
+int is_expected_ACK(struct pkt packet){
+    if(is_ACK(packet) && packet.acknum == acknumA) return 1;
+
+    return 0;
+}
+
+/* checks if packet is a NAK */
+int is_NAK(struct pkt packet){
+    if(!strcmp(packet.payload, "NAK")) return 1;
+
+    return 0;
+}
+
+/* checks if packet's acknum of NAK is the expected one */
+int is_expected_NAK(struct pkt packet){
+    if(is_NAK(packet) && packet.acknum == acknumA) return 1;
+
+    return 0;
+}
+
+// Main methods
 /* called from layer 5, passed the data to be sent to other side */
 void A_output(message)
   struct msg message;
 {
+    struct pkt packet;
 
-}
+    packet = make_packet(seqnumA, acknumA, message.data);
+    tolayer3(A, packet);
+    last_packet_sent = packet;
+    starttimer(A, INCREMENT);
 
-void B_output(message)  /* need be completed only for extra credit */
-  struct msg message;
-{
-
+    return;
 }
 
 /* called from layer 3, when a packet arrives for layer 4 */
 void A_input(packet)
   struct pkt packet;
 {
-
+    if(corrupt(packet)){
+    }
 }
 
 /* called when A's timer goes off */
 void A_timerinterrupt()
 {
+    printf("\tTimeout\n");
 
+    // Resend the last packet sent
+    tolayer3(A, last_packet_sent);
+
+    // Restart timer
+    starttimer(A, INCREMENT);
+
+    return;
 }
 
 /* the following routine will be called once (only) before any other */
 /* entity A routines are called. You can use it to do any initialization */
 void A_init()
 {
+    seqnumA = 1;
+    acknumA = 0;
+
+     return;
 }
 
 
@@ -81,6 +175,11 @@ void A_init()
 void B_input(packet)
   struct pkt packet;
 {
+    if(corrupt(packet)){    // Send NAK if packet is corrupted
+        printf("\tB realized packet is corrupt\n");
+    } else{                 // Send it to layer 5 if it is not and send ACK
+        printf("\tB received a not corrupted package\n");
+    }
 }
 
 /* called when B's timer goes off */
@@ -94,6 +193,11 @@ void B_init()
 {
 }
 
+void B_output(message)  /* need be completed only for extra credit */
+  struct msg message;
+{
+
+}
 
 /*****************************************************************
 ***************** NETWORK EMULATION CODE STARTS BELOW ***********
