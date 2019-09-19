@@ -42,15 +42,15 @@ struct pkt {
 // Adding definitions for states
 #define         A                       0
 #define         B                       1
-#define         NOT_APPLICABLE          -1
-#define         INCREMENT               10       // time for timeout
+#define         INCREMENT               11      // time for timeout
 
 // Adding global variables to keep state
-int stateA;
 int seqnumA;
 int acknumA;
 struct pkt last_packet_sent;
-int stateB;
+struct pkt last_packet_received_B;
+int n_msg_sent_A;
+int n_msg_sent_B;
 
 // Adding function headers to be able to use them before declaration
 void tolayer3(int AorB, struct pkt packet);
@@ -121,6 +121,16 @@ int is_expected_NAK(struct pkt packet){
     return 0;
 }
 
+/* Compares 2 packets and checks for equality */
+int pkts_equal(struct pkt packet1, struct pkt packet2){
+    if(packet1.seqnum != packet2.seqnum) return 0;
+    if(packet1.acknum != packet2.acknum) return 0;
+    if(packet1.checksum != packet2.checksum) return 0;
+    if(!strcmp(packet1.payload, packet2.payload)) return 0;
+
+    return 1;
+}
+
 // Main methods
 /* called from layer 5, passed the data to be sent to other side */
 void A_output(message)
@@ -129,7 +139,9 @@ void A_output(message)
     struct pkt packet;
 
     packet = make_packet(seqnumA, acknumA, message.data);
+    printf("\t\tA_output: Sending packet seqnum: %d and acknum: %d\n", packet.seqnum, packet.acknum);
     tolayer3(A, packet);
+    n_msg_sent_A++;
     last_packet_sent = packet;
     starttimer(A, INCREMENT);
 
@@ -140,17 +152,34 @@ void A_output(message)
 void A_input(packet)
   struct pkt packet;
 {
-    if(corrupt(packet)){
+    if(!corrupt(packet) && is_expected_ACK(packet)){
+        stoptimer(A);
+        printf("\t\tA_input: received expected ACK acknum %d\n", packet.acknum);
+        acknumA = (acknumA + 1) % 2;        // change A's expected acknum
+        seqnumA++;
+        printf("\t\t         new expected acknum: %d and seqnum: %d\n", acknumA, seqnumA);
+    } else if(corrupt(packet)){
+        printf("\t\tA_input: Corrupted packet\n");
+    } else if(is_ACK(packet)){
+        printf("\t\tA_input: Got ACK with wrong acknum\n");
+    } else if(is_expected_NAK(packet)){
+        printf("\t\tA_input: Got NAK\n");
+    } else if(is_NAK(packet)){
+        printf("\t\tA_input: Got NAK with wrong acknum\n");
     }
+
+    return;
 }
 
 /* called when A's timer goes off */
 void A_timerinterrupt()
 {
-    printf("\tTimeout\n");
+    printf("\tA_timerinterrupt: Timeout\n");
 
     // Resend the last packet sent
+    printf("\tA_timerinterrupt: Resending packet seqnum: %d and acknum: %d\n", last_packet_sent.seqnum, last_packet_sent.acknum);
     tolayer3(A, last_packet_sent);
+    n_msg_sent_A++;
 
     // Restart timer
     starttimer(A, INCREMENT);
@@ -164,8 +193,9 @@ void A_init()
 {
     seqnumA = 1;
     acknumA = 0;
+    n_msg_sent_A = 0;
 
-     return;
+    return;
 }
 
 
@@ -175,28 +205,48 @@ void A_init()
 void B_input(packet)
   struct pkt packet;
 {
-    if(corrupt(packet)){    // Send NAK if packet is corrupted
-        printf("\tB realized packet is corrupt\n");
-    } else{                 // Send it to layer 5 if it is not and send ACK
-        printf("\tB received a not corrupted package\n");
-    }
-}
+    struct pkt ACK_or_NAK;
 
-/* called when B's timer goes off */
-void B_timerinterrupt()
-{
+    if(corrupt(packet)){    // Send NAK if packet is corrupted
+        printf("\t\tB_input: B received a corrupted packet\n");
+        // assemble NAK
+        ACK_or_NAK = make_packet(packet.seqnum, packet.acknum, "NAK");
+        printf("\t\tB_input: sending NAK with acknum %d\n", packet.acknum);
+        tolayer3(B, ACK_or_NAK);        // send NAK
+        n_msg_sent_B++;
+    } else{                 // Send it to layer 5 if it is not and send ACK
+        printf("\t\tB_input: B received a not corrupted package\n");
+        if(!pkts_equal(packet, last_packet_received_B)){   // Not duplicate
+            tolayer5(B, packet.payload);        // pass it up
+            last_packet_received_B = packet;    // update last packet received
+        } else printf("\t\tB_input: Packet duplicated. Resending ACK with acknum %d\n", packet.acknum);
+        // assemble ACK
+        ACK_or_NAK = make_packet(packet.seqnum, packet.acknum, "ACK");
+        printf("\t\tB_input: sending ACK with acknum %d\n", packet.acknum);
+        tolayer3(B, ACK_or_NAK);        // send ACK
+        n_msg_sent_B++;
+    }
 }
 
 /* the following rouytine will be called once (only) before any other */
 /* entity B routines are called. You can use it to do any initialization */
 void B_init()
 {
+    last_packet_received_B = make_packet(0, 0, "Just to initialize");
+    n_msg_sent_B = 0;
+
+    return;
 }
 
 void B_output(message)  /* need be completed only for extra credit */
   struct msg message;
 {
 
+}
+
+/* called when B's timer goes off */
+void B_timerinterrupt()
+{
 }
 
 /*****************************************************************
@@ -333,6 +383,8 @@ int main(int argc, char *argv[])
 
 terminate:
    printf(" Simulator terminated at time %f\n after sending %d msgs from layer5\n",time,nsim);
+   printf(" Number of messages sent from A: %d\n", n_msg_sent_A);
+   printf(" Number of messages sent from B: %d\n", n_msg_sent_B);
 }
 
 
