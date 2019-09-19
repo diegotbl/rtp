@@ -39,16 +39,19 @@ struct pkt {
     };
 
 /********* STUDENTS WRITE THE NEXT SEVEN ROUTINES *********/
-// Adding definitions for states
+// Adding some definitions
 #define         A                       0
 #define         B                       1
 #define         INCREMENT               11      // time for timeout
+#define         WAITING_ACK             2       // to keep track of A's state
+#define         WAITING_CALL_ABOVE      3       // to keep track of A's state
 
 // Adding global variables to keep state
-int seqnumA;
-int acknumA;
 struct pkt last_packet_sent;
 struct pkt last_packet_received_B;
+int stateA;
+int seqnumA;
+int acknumA;
 int n_msg_sent_A;
 int n_msg_sent_B;
 
@@ -137,13 +140,18 @@ void A_output(message)
   struct msg message;
 {
     struct pkt packet;
-
-    packet = make_packet(seqnumA, acknumA, message.data);
-    printf("\t\tA_output: Sending packet seqnum: %d and acknum: %d\n", packet.seqnum, packet.acknum);
-    tolayer3(A, packet);
-    n_msg_sent_A++;
-    last_packet_sent = packet;
-    starttimer(A, INCREMENT);
+    if(stateA == WAITING_CALL_ABOVE){
+        packet = make_packet(seqnumA, acknumA, message.data);
+        printf("\t\tA_output: Sending packet seqnum: %d and acknum: %d\n", packet.seqnum, packet.acknum);
+        tolayer3(A, packet);
+        n_msg_sent_A++;
+        last_packet_sent = packet;
+        stateA = WAITING_ACK;
+        starttimer(A, INCREMENT);
+    } else{
+        // A is waiting ack and got call from above. Ignore call.
+        printf("\t\tA_output: Got call from above, but was waiting an ack\n");
+    }
 
     return;
 }
@@ -152,20 +160,26 @@ void A_output(message)
 void A_input(packet)
   struct pkt packet;
 {
-    if(!corrupt(packet) && is_expected_ACK(packet)){
-        stoptimer(A);
-        printf("\t\tA_input: received expected ACK acknum %d\n", packet.acknum);
-        acknumA = (acknumA + 1) % 2;        // change A's expected acknum
-        seqnumA++;
-        printf("\t\t         new expected acknum: %d and seqnum: %d\n", acknumA, seqnumA);
-    } else if(corrupt(packet)){
-        printf("\t\tA_input: Corrupted packet\n");
-    } else if(is_ACK(packet)){
-        printf("\t\tA_input: Got ACK with wrong acknum\n");
-    } else if(is_expected_NAK(packet)){
-        printf("\t\tA_input: Got NAK\n");
-    } else if(is_NAK(packet)){
-        printf("\t\tA_input: Got NAK with wrong acknum\n");
+    if(stateA == WAITING_ACK){
+        if(!corrupt(packet) && is_expected_ACK(packet)){
+            stoptimer(A);
+            printf("\t\tA_input: received expected ACK acknum %d\n", packet.acknum);
+            acknumA = (acknumA + 1) % 2;        // change A's expected acknum
+            seqnumA++;
+            printf("\t\t         new expected acknum: %d and seqnum: %d\n", acknumA, seqnumA);
+            stateA = WAITING_CALL_ABOVE;
+        } else if(corrupt(packet)){
+            printf("\t\tA_input: Corrupted packet\n");
+        } else if(is_ACK(packet)){
+            printf("\t\tA_input: Got ACK with wrong acknum\n");
+        } else if(is_expected_NAK(packet)){
+            printf("\t\tA_input: Got NAK\n");
+        } else if(is_NAK(packet)){
+            printf("\t\tA_input: Got NAK with wrong acknum\n");
+        }
+    } else {
+        // A is waiting call from above and got packet from channel. Do nothing.
+        printf("\t\tA_input: Got packet from channel, but was waiting for call\n");
     }
 
     return;
@@ -176,13 +190,19 @@ void A_timerinterrupt()
 {
     printf("\tA_timerinterrupt: Timeout\n");
 
-    // Resend the last packet sent
-    printf("\tA_timerinterrupt: Resending packet seqnum: %d and acknum: %d\n", last_packet_sent.seqnum, last_packet_sent.acknum);
-    tolayer3(A, last_packet_sent);
-    n_msg_sent_A++;
+    if(stateA == WAITING_ACK){
+        // Resend the last packet sent
+        printf("\tA_timerinterrupt: Resending packet seqnum: %d and acknum: %d\n", last_packet_sent.seqnum, last_packet_sent.acknum);
+        tolayer3(A, last_packet_sent);
+        n_msg_sent_A++;
 
-    // Restart timer
-    starttimer(A, INCREMENT);
+        // Restart timer
+        starttimer(A, INCREMENT);
+    } else {
+        printf("\tA_timerinterrupt: Timeout while waiting call from above. ");
+        printf("That is impossible.\n");
+        exit(1);
+    }
 
     return;
 }
@@ -194,6 +214,7 @@ void A_init()
     seqnumA = 1;
     acknumA = 0;
     n_msg_sent_A = 0;
+    stateA = WAITING_CALL_ABOVE;
 
     return;
 }
@@ -241,7 +262,6 @@ void B_init()
 void B_output(message)  /* need be completed only for extra credit */
   struct msg message;
 {
-
 }
 
 /* called when B's timer goes off */
